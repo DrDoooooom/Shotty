@@ -13,11 +13,13 @@ import asyncio
 
 
 class Plugin:
-    # A normal method. It can be called from JavaScript using call_plugin_function("method_1", argument1, argument2)
     _id_map = {}
     _id_map_frontend = {}
     _trunc_id_map = {}
-    _dump_folder = Path.home() / "Pictures" / "Screenshots"
+
+    # 1. Update destination folder to your custom Pictures path
+    _dump_folder = Path("/home/DDM/Pictures/Game_Photos&Clips")
+
     _rescuer_task = None
     _current_app_name = "Unknown"
     _rescued = False
@@ -76,21 +78,20 @@ class Plugin:
     async def copy_screenshot(self, app_id=0, url=""):
         try:
             decky_plugin.logger.info(f"Copy screenshot: {app_id}, {url}")
-            path = Path.home() / ".local/share/Steam/userdata"
-            fname = url.split("/")[-1]
-            glob_pattern = f"**/760/remote/{app_id}/screenshots/{fname}"
+            # 2. Update this to look at your SD Card PNG path
+            path = Path("/run/media/DDM/SD Card/[Screenshots]")
+            fname = url.split("/")[-1].replace(".jpg", ".png") # Ensure we look for png
+
+            # This glob might need to be simpler if your SD card doesn't use Steam's subfolder structure
+            glob_pattern = f"**/{fname}"
+
             decky_plugin.logger.info(glob_pattern)
             files = list(path.glob(glob_pattern))
-            decky_plugin.logger.info(str(files))
             did = False
             for f in files:
-                path = Plugin.make_path(self, app_id, fname)
-                os.link(f, path)
-                most_recent_path = self._dump_folder / "most_recent.jpg"
-                if most_recent_path.exists():
-                    most_recent_path.unlink()
-                os.link(f, most_recent_path)
-                decky_plugin.logger.info(f"Copied {f} to {path}")
+                target_path = Plugin.make_path(self, app_id, fname)
+                # Using copy instead of link because SD cards and Home might be different filesystems
+                shutil.copy(f, target_path)
                 did = True
             return did
         except Exception:
@@ -98,26 +99,35 @@ class Plugin:
             return False
 
     async def sdsa_classic(self):
-        id_map = self._id_map
-        path = Path.home() / ".local/share/Steam/userdata"
-        files = list(path.glob("**/screenshots/*.jpg"))
+        # Pointing to your SD Card path
+        path = Path("/run/media/DDM/SD Card/[Screenshots]")
 
-        dump_folder = self._dump_folder
+        # Look for all PNGs in that directory
+        files = list(path.glob("*.png"))
 
         total_copied = 0
 
         for f in files:
-            app_id = int(f.parent.parent.name)
-            final_path = Plugin.make_path(self, app_id, f.name)
-            if not final_path.exists():
-                os.link(f, final_path)
-                total_copied += 1
+            try:
+                # Filename is "2050650_20260216234807_1.png"
+                # Split by '_' and take the first part as the AppID
+                app_id = int(f.name.split('_')[0])
 
-        # clean up
-        for f in dump_folder.glob("**/*.jpg"):
-            if f.is_symlink() and not f.exists():
-                decky_plugin.logger.info(f"Cleaning up broken symlink {f}")
-                f.unlink()
+                # Get the translated name (e.g., "Elden Ring") from the map
+                app_name = Plugin.get_app_name(self, app_id) or str(app_id)
+
+                # Create the path: /home/DDM/Pictures/Game_Photos&Clips/Elden Ring/filename.png
+                final_path = self._dump_folder / app_name.replace(":", " ") / f.name
+
+                if not final_path.exists():
+                    final_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Use copy2 to preserve the original "Date Created" metadata
+                    shutil.copy2(f, final_path)
+                    total_copied += 1
+            except (ValueError, IndexError):
+                # If a file doesn't match the naming scheme, skip it
+                decky_plugin.logger.info(f"Skipping file with unexpected name: {f.name}")
+                continue
 
         return total_copied
 
@@ -136,7 +146,8 @@ class Plugin:
                 return name
 
     def make_path(self, app_id, fname):
-        app_name = Plugin.get_app_name(self, app_id) or str(app_id)
+        # This keeps your Game Name folder structure
+        app_name = Plugin.get_app_name(self, app_id) or "Unsorted"
         final_path = self._dump_folder / app_name.replace(":", " ") / fname
         final_path.parent.mkdir(parents=True, exist_ok=True)
         return final_path
@@ -144,7 +155,7 @@ class Plugin:
     async def _main(self):
         try:
             loop = asyncio.get_event_loop()
-            Plugin._rescuer_task = loop.create_task(Plugin.screenshot_rescuer(self))
+            #Plugin._rescuer_task = loop.create_task(Plugin.screenshot_rescuer(self))
             decky_plugin.logger.info("Loading appid translations")
             self._id_map = {
                 i["appid"]: i["name"]
